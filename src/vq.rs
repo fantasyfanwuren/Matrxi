@@ -87,12 +87,20 @@ impl Sub for VectorQuantity {
     }
 }
 
+/**#### 定义向量乘以一个数字 */
 impl Mul<f64> for VectorQuantity {
     type Output = VectorQuantity;
     fn mul(self, rhs: f64) -> Self::Output {
         VectorQuantity {
             target: self.target.iter().map(|x| x * rhs).collect(),
         }
+    }
+}
+/**#### 定义向量乘以矩阵 */
+impl Mul<Matrix> for VectorQuantity {
+    type Output = VectorQuantity;
+    fn mul(self, rhs: Matrix) -> Self::Output {
+        rhs * self
     }
 }
 

@@ -259,6 +259,23 @@ impl Matrix {
         pivots.len() == self.col_count()
     }
 
+    /**#### 创建一个row*col的零矩阵 */
+    pub fn zero(row: usize, col: usize) -> Matrix {
+        assert!(row != 0 && col != 0);
+
+        let mut elements = Vec::with_capacity(row);
+
+        for _ in 0..row {
+            elements.push(vec![0.0; col]);
+        }
+
+        Matrix {
+            elements,
+            rref: None,
+            pivots: None,
+        }
+    }
+
     /**#### 计算出矩阵的解,返回值为一个Option<Solution>若解不存在,则返回None,若解存在则返回 Solution */
     // pub fn solution(&mut self) -> Option<Solution> {
     //     if true {
@@ -759,5 +776,21 @@ mod test {
     fn test_is_injective() {
         let mut a = Matrix::from(vec![vec![3, 1], vec![5, 7], vec![1, 3]]);
         assert_eq!(a.is_injective(), true);
+    }
+
+    #[test]
+    fn test_zero() {
+        let a = Matrix::zero(2, 3);
+        let b = Matrix::from(vec![vec![0.0, 0.0, 0.0], vec![0.0, 0.0, 0.0]]);
+        let c = Matrix::from(vec![vec![0, 0, 0], vec![0, 0, 0]]);
+        assert_eq!(a, b);
+        assert!(b == c);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_zero_panic() {
+        let a = Matrix::zero(0, 1);
+        println!("{a}");
     }
 }
