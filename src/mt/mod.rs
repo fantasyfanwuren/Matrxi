@@ -441,6 +441,20 @@ impl Matrix {
         matrix
     }
 
+    /**#### 矩阵的转置 */
+    pub fn transpose(&mut self) {
+        let elements = (0..self.col_count())
+            .into_iter()
+            .map(|col| {
+                (0..self.row_count())
+                    .into_iter()
+                    .map(|row| self.elements[row][col])
+                    .collect()
+            })
+            .collect::<Vec<Vec<_>>>();
+        self.elements = elements;
+    }
+
     /**#### 计算出矩阵的解,返回值为一个Option<Solution>若解不存在,则返回None,若解存在则返回 Solution */
     // pub fn solution(&mut self) -> Option<Solution> {
     //     if true {
@@ -1058,5 +1072,13 @@ mod test {
         assert_eq!(a.clone() * a.clone() * a.clone(), a.clone().power(3));
         assert_eq!(a.clone(), a.clone().power(1));
         assert_eq!(a.clone() * a.clone() * a.clone(), a.clone().thread_power(3));
+    }
+
+    #[test]
+    fn test_transpose() {
+        let a = Matrix::from(vec![vec![2, 3, 4], vec![1, -5, 6]]);
+        let mut b = Matrix::from(vec![vec![2, 1], vec![3, -5], vec![4, 6]]);
+        b.transpose();
+        assert_eq!(a, b);
     }
 }
