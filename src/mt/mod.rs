@@ -415,6 +415,32 @@ impl Matrix {
         Matrix::from(elements)
     }
 
+    /**#### 计算一个矩阵的乘幂 */
+    pub fn power(self, num: usize) -> Matrix {
+        assert!(num > 0);
+
+        let mut matrix = self.clone();
+
+        for _ in 0..num - 1 {
+            matrix = matrix.clone() * self.clone();
+        }
+
+        matrix
+    }
+
+    /**#### 多线程计算一个矩阵的乘幂 */
+    pub fn thread_power(self, num: usize) -> Matrix {
+        assert!(num > 0);
+
+        let mut matrix = self.clone();
+
+        for _ in 0..num - 1 {
+            matrix = matrix.clone().thread_mul_matrix(self.clone());
+        }
+
+        matrix
+    }
+
     /**#### 计算出矩阵的解,返回值为一个Option<Solution>若解不存在,则返回None,若解存在则返回 Solution */
     // pub fn solution(&mut self) -> Option<Solution> {
     //     if true {
@@ -1023,5 +1049,14 @@ mod test {
         assert_eq!(c * 2.0, b);
         assert_eq!(d.thread_mul_num(2), b);
         assert_eq!(e.thread_mul_num(2.0), b);
+    }
+
+    #[test]
+    fn test_power() {
+        let a = Matrix::from(vec![vec![2, 3], vec![1, -5]]);
+        //let b = Matrix::from(vec![vec![2, 3], vec![1, -5]]);
+        assert_eq!(a.clone() * a.clone() * a.clone(), a.clone().power(3));
+        assert_eq!(a.clone(), a.clone().power(1));
+        assert_eq!(a.clone() * a.clone() * a.clone(), a.clone().thread_power(3));
     }
 }
