@@ -3,6 +3,7 @@ pub use self::sl::Solution;
 
 use crate::vq::VectorQuantity;
 
+use std::ops::Add;
 use std::ops::Mul;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -340,8 +341,8 @@ impl Matrix {
         for row in 0..self.row_count() {
             for col in 0..other.col_count() {
                 // 拷贝数据
-                let row_elements = self.get_row(row);
-                let col_elements = other.get_col(col);
+                let row_elements = self.get_row_clone(row);
+                let col_elements = other.get_col_clone(col);
                 let elements = Arc::clone(&elements);
 
                 // 创建线程,在线程内部对elements进行改变
@@ -364,15 +365,16 @@ impl Matrix {
         let elements = elements.lock().unwrap().to_owned();
         Matrix::from(elements)
     }
+
     /*获取一个矩阵中的一行数据 */
-    fn get_row(&self, row: usize) -> Vec<f64> {
+    pub fn get_row_clone(&self, row: usize) -> Vec<f64> {
         // 首先判断row的大小是否合规
         assert!(row < self.row_count());
         self.elements[row].clone()
     }
 
     /*获取一个矩阵中以列的数据 */
-    fn get_col(&self, col: usize) -> Vec<f64> {
+    pub fn get_col_clone(&self, col: usize) -> Vec<f64> {
         // 首先判断col的大小是否合规
         assert!(col < self.col_count());
         let mut col_elements = Vec::new();
@@ -380,6 +382,37 @@ impl Matrix {
             col_elements.push(self.elements[row][col]);
         }
         col_elements
+    }
+
+    /**多线程运算矩阵与数字相乘 */
+
+    pub fn thread_mul_num<B>(self, num: B) -> Matrix
+    where
+        B: Into<f64>,
+    {
+        let row_count = self.row_count();
+        let num = num.into();
+
+        // 每行开启一个线程
+        let handles: Vec<_> = (0..row_count)
+            .into_iter()
+            .map(|row| {
+                let row_elements = self.get_row_clone(row);
+                thread::spawn(move || -> Vec<f64> {
+                    row_elements
+                        .into_iter()
+                        .map(|element| element * num)
+                        .collect::<Vec<f64>>()
+                })
+            })
+            .collect();
+
+        // 汇总计算结果
+        let mut elements = Vec::new();
+        for handle in handles {
+            elements.push(handle.join().unwrap());
+        }
+        Matrix::from(elements)
     }
 
     /**#### 计算出矩阵的解,返回值为一个Option<Solution>若解不存在,则返回None,若解存在则返回 Solution */
@@ -596,6 +629,44 @@ impl Mul<Matrix> for Matrix {
             }
         }
         matrix
+    }
+}
+
+/**#### 矩阵与矩阵相加
+ * 相加后两个矩阵都会被drop,若希望继续使用,需要用户提前clone
+*/
+impl Add<Matrix> for Matrix {
+    type Output = Matrix;
+    fn add(self, rhs: Matrix) -> Self::Output {
+        // 判断两个允许相加的条件是否成立
+        assert_eq!(self.row_count(), rhs.row_count());
+        assert_eq!(self.col_count(), rhs.col_count());
+
+        let row_count = self.row_count();
+        let col_count = self.col_count();
+
+        let mut elements = vec![vec![0.0; col_count]; row_count];
+
+        for row in 0..self.row_count() {
+            for col in 0..self.col_count() {
+                elements[row][col] = self.elements[row][col] + rhs.elements[row][col];
+            }
+        }
+        Matrix::from(elements)
+    }
+}
+
+/**#### 定义矩阵乘以一个浮点数 */
+impl<T: Into<f64>> Mul<T> for Matrix {
+    type Output = Matrix;
+    fn mul(self, rhs: T) -> Self::Output {
+        let rhs = rhs.into();
+        let elements = self
+            .elements
+            .into_iter()
+            .map(|row| row.into_iter().map(|element| element * rhs).collect())
+            .collect();
+        Matrix::from(elements)
     }
 }
 
@@ -931,5 +1002,26 @@ mod test {
         let b = Matrix::from(vec![vec![4, 3, 6], vec![1, -2, 3]]);
         let should_result = Matrix::from(vec![vec![11, 0, 21], vec![-1, 13, -9]]);
         assert_eq!(a.thread_mul_matrix(b), should_result);
+    }
+
+    #[test]
+    fn test_matrix_add() {
+        let a = Matrix::from(vec![vec![2, 3], vec![1, -5]]);
+        let c = Matrix::from(vec![vec![2, 3], vec![1, -5]]);
+        let b = Matrix::from(vec![vec![4, 6], vec![2, -10]]);
+        assert_eq!(a + c, b);
+    }
+
+    #[test]
+    fn test_matrix_mul_num() {
+        let a = Matrix::from(vec![vec![2, 3], vec![1, -5]]);
+        let c = Matrix::from(vec![vec![2, 3], vec![1, -5]]);
+        let b = Matrix::from(vec![vec![4, 6], vec![2, -10]]);
+        let d = Matrix::from(vec![vec![2, 3], vec![1, -5]]);
+        let e = Matrix::from(vec![vec![2, 3], vec![1, -5]]);
+        assert_eq!(a * 2, b);
+        assert_eq!(c * 2.0, b);
+        assert_eq!(d.thread_mul_num(2), b);
+        assert_eq!(e.thread_mul_num(2.0), b);
     }
 }
