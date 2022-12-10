@@ -3,12 +3,10 @@ pub use self::sl::Solution;
 
 use crate::vq::VectorQuantity;
 
-use std::fmt;
-use std::ops::IndexMut;
 use std::ops::Mul;
-use std::sync::Arc;
-use std::sync::Mutex;
-use std::thread;
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
+use std::{fmt, thread};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Position {
@@ -276,6 +274,114 @@ impl Matrix {
         }
     }
 
+    /**#### 多线程计算矩阵与向量相乘
+     * 相乘后等式右侧变量都会失去所有权
+     */
+    pub fn thread_mul_vq(self, vq: VectorQuantity) -> VectorQuantity {
+        // 判断二者是否能够线程
+        assert_eq!(self.col_count(), vq.row_count());
+
+        let target = Arc::new(Mutex::new(vec![0.0; self.row_count()]));
+
+        // 每行开启一个线程
+        let threads: Vec<JoinHandle<()>> = (0..self.row_count())
+            .into_iter()
+            .map(|row| {
+                // 复制一下target指针,准备将所有权添加进新线程
+                let target = Arc::clone(&target);
+
+                // 克隆一下对应线程的矩阵行,以备添加到线程中
+                let matrix_row = self.elements[row].clone();
+
+                // 复制一下对应线程的向量vec,以备添加到线程中
+                let vq_row = vq.target().clone();
+
+                // 采用move转移相关变量的所有权到线程中
+                thread::spawn(move || {
+                    // 初始化要计算的元素为0
+                    let mut vq_element = 0.0;
+
+                    // 计算对应线程的对应位置的向量的单个元素
+                    for (num, element) in matrix_row.into_iter().enumerate() {
+                        vq_element += element * vq_row[num];
+                    }
+
+                    // 将元素添加到对应位置
+                    let mut target = target.lock().unwrap();
+                    target[row] = vq_element;
+                })
+            })
+            .collect();
+
+        // 等待所有线程结束
+        for thread in threads {
+            thread.join().unwrap();
+        }
+
+        // 提取target锁中的vec
+        let target = target.lock().unwrap().to_vec();
+        VectorQuantity::new(target)
+    }
+
+    /**#### 多线程计算矩阵与矩阵相乘
+     * 相乘后等式右侧变量都会失去所有权
+     */
+    pub fn thread_mul_matrix(self, other: Matrix) -> Matrix {
+        // 判断是否允许相乘
+        assert_eq!(self.col_count(), other.row_count());
+
+        // 定义一个矩阵的原子引用互斥锁,方便在多线程中修改数据
+        let elements = vec![vec![0.0; other.col_count()]; self.row_count()]; //Matrix::zero(self.row_count(), other.col_count());
+        let elements = Arc::new(Mutex::new(elements));
+
+        // 对线程进行布置
+
+        let mut threads = Vec::new();
+        for row in 0..self.row_count() {
+            for col in 0..other.col_count() {
+                // 拷贝数据
+                let row_elements = self.get_row(row);
+                let col_elements = other.get_col(col);
+                let elements = Arc::clone(&elements);
+
+                // 创建线程,在线程内部对elements进行改变
+                let handle = thread::spawn(move || {
+                    let mut element = 0.0;
+                    for (num, _) in row_elements.iter().enumerate() {
+                        element += row_elements[num] * col_elements[num];
+                    }
+                    let mut elements = elements.lock().unwrap();
+                    elements[row][col] = element;
+                });
+                threads.push(handle);
+            }
+        }
+
+        for handle in threads {
+            handle.join().unwrap();
+        }
+
+        let elements = elements.lock().unwrap().to_owned();
+        Matrix::from(elements)
+    }
+    /*获取一个矩阵中的一行数据 */
+    fn get_row(&self, row: usize) -> Vec<f64> {
+        // 首先判断row的大小是否合规
+        assert!(row < self.row_count());
+        self.elements[row].clone()
+    }
+
+    /*获取一个矩阵中以列的数据 */
+    fn get_col(&self, col: usize) -> Vec<f64> {
+        // 首先判断col的大小是否合规
+        assert!(col < self.col_count());
+        let mut col_elements = Vec::new();
+        for row in 0..self.row_count() {
+            col_elements.push(self.elements[row][col]);
+        }
+        col_elements
+    }
+
     /**#### 计算出矩阵的解,返回值为一个Option<Solution>若解不存在,则返回None,若解存在则返回 Solution */
     // pub fn solution(&mut self) -> Option<Solution> {
     //     if true {
@@ -453,41 +559,43 @@ impl Mul<VectorQuantity> for Matrix {
         // 判断是否具有能够相乘的条件
         assert_eq!(self.col_count(), vector.row_count());
 
-        // 定义一个原子引用互斥锁,里面存放待计算的向量结果
-        let target = Arc::new(Mutex::new(vec![0.0; self.row_count()]));
+        let mut target: Vec<f64> = vec![];
 
-        //每行开启一个线程
-        let threads = (0..self.row_count())
-            .map(|i| {
-                // 因为线程会获取所有权,所以要将矩阵的每行的数据复制一遍
-                let matrix_row = self.elements[i].clone();
-
-                // 因为线程会获取所有权,克隆一个原子引用,方便放入线程中
-                let target = target.clone();
-
-                // 因为线程会获取所有权,所以每次都要复制一下向量
-                let vector = vector.target().clone();
-
-                thread::spawn(move || {
-                    let mut row_sum = 0.0;
-                    for (j, _) in matrix_row.iter().enumerate() {
-                        row_sum += matrix_row[j] * vector[j];
-                    }
-
-                    // 每个线程是一行数据的计算,计算完把对应的结果给到target向量上
-                    *target.lock().unwrap().index_mut(i) = row_sum;
-                })
-            })
-            .collect::<Vec<_>>();
-
-        // 等待各个线程计算完毕
-        for thread in threads {
-            thread.join().unwrap();
+        for row in 0..self.row_count() {
+            let mut value = 0.0;
+            for col in 0..vector.row_count() {
+                value += self.elements[row][col] * vector.target()[col]
+            }
+            target.push(value);
         }
-
-        // 取出原子引用互斥锁中的Vec<f64>
-        let target = target.lock().unwrap().to_vec();
         VectorQuantity::new(target)
+    }
+}
+
+/**
+ * #### 矩阵与矩阵相乘运算,后期需要优化为复杂度更低的算法
+ * 相乘后,两个矩阵都会被drop,若希望继续使用,需要用户提前使用clone
+*/
+impl Mul<Matrix> for Matrix {
+    type Output = Matrix;
+    fn mul(self, rhs: Matrix) -> Self::Output {
+        // 首先判断是否可以相乘
+        assert_eq!(self.col_count(), rhs.row_count());
+
+        // 分析:结果的第row行第col列的元素等于,self的第row行与rhs的第col列各个元素乘积和
+        let total_row = self.row_count();
+        let total_col = rhs.col_count();
+        let total_step = self.col_count();
+
+        let mut matrix = Matrix::zero(total_row, total_col);
+        for row in 0..total_row {
+            for col in 0..total_col {
+                for step in 0..total_step {
+                    matrix.elements[row][col] += self.elements[row][step] * rhs.elements[step][col];
+                }
+            }
+        }
+        matrix
     }
 }
 
@@ -792,5 +900,36 @@ mod test {
     fn test_zero_panic() {
         let a = Matrix::zero(0, 1);
         println!("{a}");
+    }
+
+    #[test]
+    fn test_matrix_mul_matrix() {
+        let a = Matrix::from(vec![vec![2, 3], vec![1, -5]]);
+        let b = Matrix::from(vec![vec![4, 3, 6], vec![1, -2, 3]]);
+        let should_result = Matrix::from(vec![vec![11, 0, 21], vec![-1, 13, -9]]);
+        assert_eq!(a * b, should_result);
+    }
+
+    #[test]
+    fn test_thread_mul_vq() {
+        let a = Matrix::from(vec![
+            vec![1f64, 2f64, 3f64],
+            vec![1f64, 2f64, 3f64],
+            vec![1f64, 2f64, 3f64],
+            vec![1f64, 2f64, 3f64],
+        ]);
+
+        let b = VectorQuantity::new(vec![2f64, 3f64, 4f64]);
+        let b1 = VectorQuantity::new(vec![20f64, 20f64, 20f64, 20f64]);
+        let mul_result = a.thread_mul_vq(b);
+        assert_eq!(mul_result, b1);
+    }
+
+    #[test]
+    fn test_thread_mul_matrix() {
+        let a = Matrix::from(vec![vec![2, 3], vec![1, -5]]);
+        let b = Matrix::from(vec![vec![4, 3, 6], vec![1, -2, 3]]);
+        let should_result = Matrix::from(vec![vec![11, 0, 21], vec![-1, 13, -9]]);
+        assert_eq!(a.thread_mul_matrix(b), should_result);
     }
 }
